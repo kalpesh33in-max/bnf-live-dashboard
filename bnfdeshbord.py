@@ -75,36 +75,39 @@ def extract_strike_and_type(symbol):
     return None
 
 def style_dashboard(df, future_price):
-    """Applies color coding based on moneyness."""
+    """Applies color coding based on moneyness using a robust method."""
     if future_price == 0:
-        return df
+        return df.style # Return a basic Styler object if no price
 
-    def apply_color(val, col_name):
-        try:
-            parts = col_name.split()
-            strike = float(parts[0])
-            opt_type = parts[1]
-        except (ValueError, IndexError):
-            return ''
-
-        atm_band = future_price * 0.005 # 0.5% band for ATM
-        style = ''
-
-        if abs(strike - future_price) <= atm_band:
-            style = 'background-color: lightyellow'
-        elif opt_type == 'ce' and strike < future_price: # ITM Call
-            style = 'background-color: lightgreen'
-        elif opt_type == 'pe' and strike > future_price: # ITM Put
-            style = 'background-color: lightcoral'
+    def moneyness_styler(df_to_style: pd.DataFrame):
+        # Create a new DataFrame of the same shape to hold the styles
+        df_style = pd.DataFrame('', index=df_to_style.index, columns=df_to_style.columns)
         
-        return style
+        atm_band = future_price * 0.005 # 0.5% band for ATM
+        
+        for col_name in df_to_style.columns:
+            try:
+                parts = col_name.split()
+                strike = float(parts[0])
+                opt_type = parts[1]
+            except (ValueError, IndexError):
+                continue # Skip columns that aren't option strikes
 
-    # Create a new DataFrame for styling to avoid modifying the original
-    styled_df = df.copy()
-    for col in styled_df.columns:
-        styled_df[col] = styled_df[col].apply(lambda val: apply_color(val, col))
+            # Determine the style for the entire column based on moneyness
+            style = ''
+            if abs(strike - future_price) <= atm_band:
+                style = 'background-color: lightyellow'
+            elif opt_type == 'ce' and strike < future_price: # ITM Call
+                style = 'background-color: lightgreen'
+            elif opt_type == 'pe' and strike > future_price: # ITM Put
+                style = 'background-color: lightcoral'
+            
+            if style:
+                df_style[col_name] = style
+        
+        return df_style
 
-    return df.style.apply(lambda x: styled_df.loc[x.name], axis=1)
+    return df.style.apply(moneyness_styler, axis=None)
 
 # ==============================================================================
 # ============================ STREAMLIT LAYOUT ================================
