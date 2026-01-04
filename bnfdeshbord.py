@@ -75,36 +75,34 @@ def extract_strike_and_type(symbol):
     return None
 
 def style_dashboard(df, future_price):
-    """Applies color coding based on moneyness using a robust method."""
+    """Applies vibrant color coding based on moneyness."""
     if future_price == 0:
-        return df.style # Return a basic Styler object if no price
+        return df.style
 
     def moneyness_styler(df_to_style: pd.DataFrame):
-        # Create a new DataFrame of the same shape to hold the styles
         df_style = pd.DataFrame('', index=df_to_style.index, columns=df_to_style.columns)
-        
-        atm_band = future_price * 0.005 # 0.5% band for ATM
+        atm_band = future_price * 0.005
         
         for col_name in df_to_style.columns:
             try:
-                parts = col_name.split()
+                # Handle base and ATM-labeled columns
+                cleaned_col_name = col_name.replace(' (ATM)', '')
+                parts = cleaned_col_name.split()
                 strike = float(parts[0])
                 opt_type = parts[1]
             except (ValueError, IndexError):
-                continue # Skip columns that aren't option strikes
+                continue
 
-            # Determine the style for the entire column based on moneyness
             style = ''
             if abs(strike - future_price) <= atm_band:
-                style = 'background-color: lightyellow'
+                style = 'background-color: #ffff66' # Vibrant Yellow
             elif opt_type == 'ce' and strike < future_price: # ITM Call
-                style = 'background-color: lightgreen'
+                style = 'background-color: #66ff66' # Vibrant Green
             elif opt_type == 'pe' and strike > future_price: # ITM Put
-                style = 'background-color: lightcoral'
+                style = 'background-color: #ff6666' # Vibrant Red/Coral
             
             if style:
                 df_style[col_name] = style
-        
         return df_style
 
     return df.style.apply(moneyness_styler, axis=None)
@@ -126,14 +124,10 @@ data_placeholder = st.empty()
 
 async def update_dashboard():
     """Calculates OI RoC and updates the Streamlit dashboard."""
-    # Small initial sleep to allow websocket to connect
-    await asyncio.sleep(5)
+    await asyncio.sleep(5) # Small initial sleep
     
     while True:
-        # Copy live data to past data for calculation
         st.session_state.past_data = st.session_state.live_data.copy()
-        
-        # Wait for 1 minute before the next update cycle
         await asyncio.sleep(60) 
         
         new_row = {}
@@ -146,28 +140,41 @@ async def update_dashboard():
             
             oi_roc = 0.0
             if past_oi > 0:
-                oi_change = live_oi - past_oi
-                oi_roc = (oi_change / past_oi) * 100
+                oi_roc = ((live_oi - past_oi) / past_oi) * 100
             
             strike_col_name = extract_strike_and_type(symbol)
             if strike_col_name in st.session_state.dashboard_df.columns:
                 new_row[strike_col_name] = f"{oi_roc:.2f}%"
 
-        # Create a new DataFrame for the new row of data
         new_df_row = pd.DataFrame([new_row], index=[get_current_time()])
-
-        # Prepend the new row to the main DataFrame
-        st.session_state.dashboard_df = pd.concat([new_df_row, st.session_state.dashboard_df])
+        st.session_state.dashboard_df = pd.concat([st.session_state.dashboard_df, new_df_row])
         
-        # Limit the dashboard to the last 20 entries
-        st.session_state.dashboard_df = st.session_state.dashboard_df.head(20)
+        # --- Prepare DataFrame for Display ---
+        df_display = st.session_state.dashboard_df.copy()
+        
+        # Ensure new time is on top
+        df_display = df_display.sort_index(ascending=False)
+        df_display = df_display.head(20) # Limit entries
+
+        # Find and rename ATM column header for display
+        future_price = st.session_state.future_price
+        if future_price > 0:
+            atm_band = future_price * 0.005
+            new_cols = {}
+            for col in df_display.columns:
+                try:
+                    strike = float(col.split()[0])
+                    if abs(strike - future_price) <= atm_band:
+                        new_cols[col] = f"{col} (ATM)"
+                except (ValueError, IndexError):
+                    continue
+            df_display.rename(columns=new_cols, inplace=True)
 
         # Update Streamlit elements
         future_price_placeholder.metric("Bank Nifty Future Price", f"{st.session_state.future_price:.2f}")
         last_update_placeholder.info(f"Last updated: {get_current_time()}")
         
-        # Apply styling before displaying
-        styled_table = style_dashboard(st.session_state.dashboard_df, st.session_state.future_price)
+        styled_table = style_dashboard(df_display, st.session_state.future_price)
         data_placeholder.dataframe(styled_table)
 
 
