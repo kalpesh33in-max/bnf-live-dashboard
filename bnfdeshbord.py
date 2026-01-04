@@ -18,6 +18,18 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- Custom CSS for column width ---
+st.markdown("""
+    <style>
+    .stDataFrame th, .stDataFrame td {
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # --- App Title ---
 st.title("🚀 Bank Nifty Live OI RoC% Dashboard")
 
