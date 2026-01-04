@@ -28,19 +28,14 @@ st.markdown("""
 
 st.title("🚀 Bank Nifty Interactive OI Dashboard")
 
-# --- GDFL Configuration ---
 API_KEY = os.environ.get("API_KEY", "YOUR_API_KEY") 
 WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 
-# --- Static App Configuration ---
-# Define a wide range of possible strikes to monitor
 STRIKE_RANGE = range(59000, 61001, 100)
 EXPIRY_PREFIX = "BANKNIFTY27JAN26"
 
-# Generate the full list of symbols to monitor in the background
-SYMBOLS_TO_MONITOR = [f"{EXPIRY_PREFIX}{strike}{opt_type}" for strike in STRIKE_RANGE for opt_type in ["CE", "PE"]]
-SYMBOLS_TO_MONITOR.append(f"{EXPIRY_PREFIX}FUT")
-
+ALL_OPTION_SYMBOLS = [f"{EXPIRY_PREFIX}{strike}{opt_type}" for strike in STRIKE_RANGE for opt_type in ["CE", "PE"]]
+SYMBOLS_TO_MONITOR = ALL_OPTION_SYMBOLS + [f"{EXPIRY_PREFIX}FUT"]
 
 # ==============================================================================
 # ============================ SESSION STATE INIT ==============================
@@ -52,10 +47,11 @@ if 'past_data' not in st.session_state:
     st.session_state.past_data = st.session_state.live_data.copy()
 if 'future_price' not in st.session_state:
     st.session_state.future_price = 0.0
-if 'dashboard_df' not in st.session_state:
-    st.session_state.dashboard_df = pd.DataFrame()
+if 'history_df' not in st.session_state:
+    all_cols = sorted([f"{s} {t.lower()}" for s in STRIKE_RANGE for t in ["ce", "pe"]])
+    st.session_state.history_df = pd.DataFrame(columns=all_cols)
 if 'atm_strike' not in st.session_state:
-    st.session_state.atm_strike = 60100 # Default ATM
+    st.session_state.atm_strike = 60100
 
 # ==============================================================================
 # ============================ HELPER FUNCTIONS ================================
@@ -82,11 +78,11 @@ def style_dashboard(df, selected_atm):
 
             style = ''
             if strike == selected_atm:
-                style = 'background-color: khaki'
+                style = 'background-color: khaki; color: black; font-weight: bold;'
             elif opt_type == 'ce' and strike < selected_atm:
-                style = 'background-color: palegreen'
+                style = 'background-color: palegreen; color: black; font-weight: bold;'
             elif opt_type == 'pe' and strike > selected_atm:
-                style = 'background-color: lightsalmon'
+                style = 'background-color: lightsalmon; color: black; font-weight: bold;'
             
             if style:
                 df_style[col_name] = style
@@ -97,20 +93,17 @@ def style_dashboard(df, selected_atm):
 # ============================ STREAMLIT LAYOUT ================================
 # ==============================================================================
 
-# --- Interactive Controls ---
 st.session_state.atm_strike = st.selectbox(
     'Select Central ATM Strike',
     options=list(STRIKE_RANGE),
     index=list(STRIKE_RANGE).index(st.session_state.atm_strike)
 )
 
-# --- Top Metrics ---
 future_price_col, atm_col, last_update_col = st.columns(3)
 future_price_placeholder = future_price_col.empty()
 atm_placeholder = atm_col.empty()
 last_update_placeholder = last_update_col.empty()
 
-# --- Main Data Table Placeholder ---
 data_placeholder = st.empty()
 
 # ==============================================================================
@@ -118,56 +111,46 @@ data_placeholder = st.empty()
 # ==============================================================================
 
 async def update_dashboard():
-    await asyncio.sleep(5) # Initial delay for connection
+    await asyncio.sleep(5)
     
     while True:
         st.session_state.past_data = st.session_state.live_data.copy()
         await asyncio.sleep(60)
         
-        # --- Generate dynamic columns based on selected ATM ---
+        new_row = {}
+        for symbol in ALL_OPTION_SYMBOLS:
+            live_oi = st.session_state.live_data.get(symbol, {}).get("oi", 0)
+            past_oi = st.session_state.past_data.get(symbol, {}).get("oi", 0)
+            
+            oi_roc = 0.0
+            if past_oi > 0:
+                oi_roc = ((live_oi - past_oi) / past_oi) * 100
+            
+            strike_col_name = extract_strike_and_type(symbol)
+            if strike_col_name:
+                new_row[strike_col_name] = f"{oi_roc:.2f}%"
+
+        if new_row:
+            new_df_row = pd.DataFrame([new_row], index=[get_current_time()])
+            st.session_state.history_df = pd.concat([st.session_state.history_df, new_df_row])
+
         center_strike = st.session_state.atm_strike
-        
-        # 5 ITM Calls, 1 ATM Call, 1 ATM Put, 5 ITM Puts
         ce_strikes = [f"{center_strike - i*100} ce" for i in range(5, 0, -1)]
         atm_cols = [f"{center_strike} ce", f"{center_strike} pe"]
         pe_strikes = [f"{center_strike + i*100} pe" for i in range(1, 6)]
         
         display_columns = ce_strikes + atm_cols + pe_strikes
-
-        new_row = {col: "0.00%" for col in display_columns}
         
-        for symbol in SYMBOLS_TO_MONITOR:
-            if "FUT" in symbol:
-                continue
-
-            strike_col_name = extract_strike_and_type(symbol)
-            if strike_col_name in display_columns:
-                live_oi = st.session_state.live_data.get(symbol, {}).get("oi", 0)
-                past_oi = st.session_state.past_data.get(symbol, {}).get("oi", 0)
-                
-                oi_roc = 0.0
-                if past_oi > 0:
-                    oi_roc = ((live_oi - past_oi) / past_oi) * 100
-                
-                new_row[strike_col_name] = f"{oi_roc:.2f}%"
-
-        new_df_row = pd.DataFrame([new_row], index=[get_current_time()])
+        valid_display_columns = [col for col in display_columns if col in st.session_state.history_df.columns]
+        df_display = st.session_state.history_df[valid_display_columns]
         
-        # If columns changed, reset the dataframe
-        if list(st.session_state.dashboard_df.columns) != display_columns:
-            st.session_state.dashboard_df = pd.DataFrame(columns=display_columns)
+        df_display = df_display.sort_index(ascending=False).head(20)
 
-        st.session_state.dashboard_df = pd.concat([st.session_state.dashboard_df, new_df_row])
-        
-        # --- Prepare for Display ---
-        df_display = st.session_state.dashboard_df.sort_index(ascending=False).head(20)
-        
-        # --- Update Placeholders ---
         future_price_placeholder.metric("BNF Future Price", f"{st.session_state.future_price:.2f}")
-        atm_placeholder.metric("Selected ATM", st.session_state.atm_strike)
+        atm_placeholder.metric("Selected ATM", center_strike)
         last_update_placeholder.info(f"Last updated: {get_current_time()}")
         
-        styled_table = style_dashboard(df_display, st.session_state.atm_strike)
+        styled_table = style_dashboard(df_display, center_strike)
         data_placeholder.dataframe(styled_table)
 
 async def listen_to_gdfl():
