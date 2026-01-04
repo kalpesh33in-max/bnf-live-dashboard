@@ -12,17 +12,13 @@ import re
 # ============================== CONFIGURATION =================================
 # ==============================================================================
 
-# --- Streamlit Page Configuration ---
-st.set_page_config(
-    page_title="Bank Nifty OI Dashboard",
-    layout="wide"
-)
+st.set_page_config(page_title="Bank Nifty OI Dashboard", layout="wide")
 
-# --- Custom CSS for column width ---
 st.markdown("""
     <style>
     .stDataFrame th, .stDataFrame td {
         max-width: 100px;
+        min-width: 75px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -30,104 +26,91 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- App Title ---
-st.title("🚀 Bank Nifty Live OI RoC% Dashboard")
+st.title("🚀 Bank Nifty Interactive OI Dashboard")
 
 # --- GDFL Configuration ---
-# Load credentials securely from environment variables
-# Make sure to set these in your Railway deployment environment
 API_KEY = os.environ.get("API_KEY", "YOUR_API_KEY") 
 WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
 
-# --- Symbols to Monitor (Copied from gfdl_scanner.py for BANKNIFTY only) ---
-SYMBOLS_TO_MONITOR = [
-    # BANKNIFTY Options
-    "BANKNIFTY27JAN2660100CE", "BANKNIFTY27JAN2660100PE", "BANKNIFTY27JAN2660000CE", "BANKNIFTY27JAN2660000PE",
-    "BANKNIFTY27JAN2659900CE", "BANKNIFTY27JAN2659900PE", "BANKNIFTY27JAN2659800CE", "BANKNIFTY27JAN2659800PE",
-    "BANKNIFTY27JAN2659700CE", "BANKNIFTY27JAN2659700PE", "BANKNIFTY27JAN2659600CE", "BANKNIFTY27JAN2659600PE",
-    "BANKNIFTY27JAN2660200CE", "BANKNIFTY27JAN2660200PE", "BANKNIFTY27JAN2660300CE", "BANKNIFTY27JAN2660300PE",
-    "BANKNIFTY27JAN2660400CE", "BANKNIFTY27JAN2660400PE", "BANKNIFTY27JAN2660500CE", "BANKNIFTY27JAN2660500PE",
-    "BANKNIFTY27JAN2660600CE", "BANKNIFTY27JAN2660600PE",
-    # Future for price
-    "BANKNIFTY27JAN26FUT",
-]
+# --- Static App Configuration ---
+# Define a wide range of possible strikes to monitor
+STRIKE_RANGE = range(59000, 61001, 100)
+EXPIRY_PREFIX = "BANKNIFTY27JAN26"
 
-# --- Global State Management ---
-# Using Streamlit's session state to persist data across reruns
+# Generate the full list of symbols to monitor in the background
+SYMBOLS_TO_MONITOR = [f"{EXPIRY_PREFIX}{strike}{opt_type}" for strike in STRIKE_RANGE for opt_type in ["CE", "PE"]]
+SYMBOLS_TO_MONITOR.append(f"{EXPIRY_PREFIX}FUT")
+
+
+# ==============================================================================
+# ============================ SESSION STATE INIT ==============================
+# ==============================================================================
+
 if 'live_data' not in st.session_state:
     st.session_state.live_data = {symbol: {"oi": 0} for symbol in SYMBOLS_TO_MONITOR}
 if 'past_data' not in st.session_state:
     st.session_state.past_data = st.session_state.live_data.copy()
 if 'future_price' not in st.session_state:
-    st.session_state.future_price = 0
+    st.session_state.future_price = 0.0
 if 'dashboard_df' not in st.session_state:
-    # Initialize an empty DataFrame with correct columns based on PDF
-    columns = sorted([
-        "59700 ce", "59800 ce", "59900 ce", "60000 ce", "60100 ce",
-        "60100 pe", "60200 pe", "60300 pe", "60400 pe", "60500 pe", "60600 pe"
-    ])
-    st.session_state.dashboard_df = pd.DataFrame(columns=columns)
+    st.session_state.dashboard_df = pd.DataFrame()
+if 'atm_strike' not in st.session_state:
+    st.session_state.atm_strike = 60100 # Default ATM
 
 # ==============================================================================
 # ============================ HELPER FUNCTIONS ================================
 # ==============================================================================
 
 def get_current_time():
-    """Gets the current time in Asia/Kolkata timezone."""
     return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
 
 def extract_strike_and_type(symbol):
-    """Extracts strike and type from symbol string."""
-    # Example: BANKNIFTY27JAN2660100CE -> "60100 ce"
     match = re.search(r'\d{2}[A-Z]{3}\d{2}(\d+)(CE|PE)$', symbol)
     if match:
-        strike = match.group(1)
-        opt_type = match.group(2).lower()
-        return f"{strike} {opt_type}"
+        return f"{match.group(1)} {match.group(2).lower()}"
     return None
 
-def style_dashboard(df, future_price):
-    """Applies vibrant color coding based on moneyness."""
-    if future_price == 0:
-        return df.style
-
+def style_dashboard(df, selected_atm):
     def moneyness_styler(df_to_style: pd.DataFrame):
         df_style = pd.DataFrame('', index=df_to_style.index, columns=df_to_style.columns)
-        atm_band = future_price * 0.005
-        
         for col_name in df_to_style.columns:
             try:
-                # Handle base and ATM-labeled columns
-                cleaned_col_name = col_name.replace(' (ATM)', '')
-                parts = cleaned_col_name.split()
-                strike = float(parts[0])
-                opt_type = parts[1]
+                strike = float(col_name.split()[0])
+                opt_type = col_name.split()[1]
             except (ValueError, IndexError):
                 continue
 
             style = ''
-            if abs(strike - future_price) <= atm_band:
-                style = 'background-color: #ffff66' # Vibrant Yellow
-            elif opt_type == 'ce' and strike < future_price: # ITM Call
-                style = 'background-color: #66ff66' # Vibrant Green
-            elif opt_type == 'pe' and strike > future_price: # ITM Put
-                style = 'background-color: #ff6666' # Vibrant Red/Coral
+            if strike == selected_atm:
+                style = 'background-color: khaki'
+            elif opt_type == 'ce' and strike < selected_atm:
+                style = 'background-color: palegreen'
+            elif opt_type == 'pe' and strike > selected_atm:
+                style = 'background-color: lightsalmon'
             
             if style:
                 df_style[col_name] = style
         return df_style
-
     return df.style.apply(moneyness_styler, axis=None)
 
 # ==============================================================================
 # ============================ STREAMLIT LAYOUT ================================
 # ==============================================================================
 
-# --- Placeholders for live data ---
-st.info("Dashboard will update every 1 minute. Please wait for the first data to arrive...")
-future_price_col, last_update_col = st.columns(2)
+# --- Interactive Controls ---
+st.session_state.atm_strike = st.selectbox(
+    'Select Central ATM Strike',
+    options=list(STRIKE_RANGE),
+    index=list(STRIKE_RANGE).index(st.session_state.atm_strike)
+)
+
+# --- Top Metrics ---
+future_price_col, atm_col, last_update_col = st.columns(3)
 future_price_placeholder = future_price_col.empty()
+atm_placeholder = atm_col.empty()
 last_update_placeholder = last_update_col.empty()
+
+# --- Main Data Table Placeholder ---
 data_placeholder = st.empty()
 
 # ==============================================================================
@@ -135,95 +118,83 @@ data_placeholder = st.empty()
 # ==============================================================================
 
 async def update_dashboard():
-    """Calculates OI RoC and updates the Streamlit dashboard."""
-    await asyncio.sleep(5) # Small initial sleep
+    await asyncio.sleep(5) # Initial delay for connection
     
     while True:
         st.session_state.past_data = st.session_state.live_data.copy()
-        await asyncio.sleep(60) 
+        await asyncio.sleep(60)
         
-        new_row = {}
+        # --- Generate dynamic columns based on selected ATM ---
+        center_strike = st.session_state.atm_strike
+        
+        # 5 ITM Calls, 1 ATM Call, 1 ATM Put, 5 ITM Puts
+        ce_strikes = [f"{center_strike - i*100} ce" for i in range(5, 0, -1)]
+        atm_cols = [f"{center_strike} ce", f"{center_strike} pe"]
+        pe_strikes = [f"{center_strike + i*100} pe" for i in range(1, 6)]
+        
+        display_columns = ce_strikes + atm_cols + pe_strikes
+
+        new_row = {col: "0.00%" for col in display_columns}
+        
         for symbol in SYMBOLS_TO_MONITOR:
             if "FUT" in symbol:
                 continue
 
-            live_oi = st.session_state.live_data.get(symbol, {}).get("oi", 0)
-            past_oi = st.session_state.past_data.get(symbol, {}).get("oi", 0)
-            
-            oi_roc = 0.0
-            if past_oi > 0:
-                oi_roc = ((live_oi - past_oi) / past_oi) * 100
-            
             strike_col_name = extract_strike_and_type(symbol)
-            if strike_col_name in st.session_state.dashboard_df.columns:
+            if strike_col_name in display_columns:
+                live_oi = st.session_state.live_data.get(symbol, {}).get("oi", 0)
+                past_oi = st.session_state.past_data.get(symbol, {}).get("oi", 0)
+                
+                oi_roc = 0.0
+                if past_oi > 0:
+                    oi_roc = ((live_oi - past_oi) / past_oi) * 100
+                
                 new_row[strike_col_name] = f"{oi_roc:.2f}%"
 
         new_df_row = pd.DataFrame([new_row], index=[get_current_time()])
+        
+        # If columns changed, reset the dataframe
+        if list(st.session_state.dashboard_df.columns) != display_columns:
+            st.session_state.dashboard_df = pd.DataFrame(columns=display_columns)
+
         st.session_state.dashboard_df = pd.concat([st.session_state.dashboard_df, new_df_row])
         
-        # --- Prepare DataFrame for Display ---
-        df_display = st.session_state.dashboard_df.copy()
+        # --- Prepare for Display ---
+        df_display = st.session_state.dashboard_df.sort_index(ascending=False).head(20)
         
-        # Ensure new time is on top
-        df_display = df_display.sort_index(ascending=False)
-        df_display = df_display.head(20) # Limit entries
-
-        # Find and rename ATM column header for display
-        future_price = st.session_state.future_price
-        if future_price > 0:
-            atm_band = future_price * 0.005
-            new_cols = {}
-            for col in df_display.columns:
-                try:
-                    strike = float(col.split()[0])
-                    if abs(strike - future_price) <= atm_band:
-                        new_cols[col] = f"{col} (ATM)"
-                except (ValueError, IndexError):
-                    continue
-            df_display.rename(columns=new_cols, inplace=True)
-
-        # Update Streamlit elements
-        future_price_placeholder.metric("Bank Nifty Future Price", f"{st.session_state.future_price:.2f}")
+        # --- Update Placeholders ---
+        future_price_placeholder.metric("BNF Future Price", f"{st.session_state.future_price:.2f}")
+        atm_placeholder.metric("Selected ATM", st.session_state.atm_strike)
         last_update_placeholder.info(f"Last updated: {get_current_time()}")
         
-        styled_table = style_dashboard(df_display, st.session_state.future_price)
+        styled_table = style_dashboard(df_display, st.session_state.atm_strike)
         data_placeholder.dataframe(styled_table)
 
-
 async def listen_to_gdfl():
-    """Connects to GDFL WebSocket and processes live data."""
     try:
         async with websockets.connect(WSS_URL) as websocket:
-            auth_request = {"MessageType": "Authenticate", "Password": API_KEY}
-            await websocket.send(json.dumps(auth_request))
+            await websocket.send(json.dumps({"MessageType": "Authenticate", "Password": API_KEY}))
             auth_response = await websocket.recv()
-            
             if not json.loads(auth_response).get("Complete"):
                 st.error(f"GDFL Authentication FAILED: {auth_response}")
                 return
 
             for symbol in SYMBOLS_TO_MONITOR:
-                await websocket.send(json.dumps({
-                    "MessageType": "SubscribeRealtime", "Exchange": "NFO",
-                    "Unsubscribe": "false", "InstrumentIdentifier": symbol
-                }))
+                await websocket.send(json.dumps({"MessageType": "SubscribeRealtime", "Exchange": "NFO", "Unsubscribe": "false", "InstrumentIdentifier": symbol}))
 
             async for message in websocket:
                 data = json.loads(message)
                 if data.get("MessageType") == "RealtimeResult":
                     symbol = data.get("InstrumentIdentifier")
-                    if symbol in st.session_state.live_data:
-                        # Update OI
+                    if symbol and symbol in st.session_state.live_data:
                         new_oi = data.get("OpenInterest")
                         if new_oi is not None:
                             st.session_state.live_data[symbol]["oi"] = new_oi
                         
-                        # Update Future Price if it's the future symbol
                         if "FUT" in symbol:
                             new_price = data.get("LastTradePrice")
                             if new_price is not None:
                                 st.session_state.future_price = new_price
-
     except Exception as e:
         st.error(f"An error occurred: {e}")
 
@@ -232,11 +203,7 @@ async def listen_to_gdfl():
 # ==============================================================================
 
 async def main():
-    """Runs the WebSocket listener and the dashboard updater concurrently."""
-    await asyncio.gather(
-        listen_to_gdfl(),
-        update_dashboard()
-    )
+    await asyncio.gather(listen_to_gdfl(), update_dashboard())
 
 if __name__ == "__main__":
     if API_KEY == "YOUR_API_KEY":
