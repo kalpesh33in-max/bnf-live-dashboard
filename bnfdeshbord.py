@@ -8,10 +8,13 @@ from zoneinfo import ZoneInfo
 import os
 import re
 import threading
+import queue
 
 # ==============================================================================
 # ============================== CONFIGURATION =================================
 # ==============================================================================
+
+data_queue = queue.Queue()
 
 st.set_page_config(page_title="Bank Nifty OI Dashboard", layout="wide")
 
@@ -55,6 +58,8 @@ if 'atm_strike' not in st.session_state:
     st.session_state.atm_strike = 60100
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = "N/A"
+if 'last_history_update_time' not in st.session_state:
+    st.session_state.last_history_update_time = datetime.min
 
 # ==============================================================================
 # ============================ HELPER FUNCTIONS ================================
@@ -93,31 +98,6 @@ def style_dashboard(df, selected_atm):
 # ======================= BACKGROUND DATA UPDATER ==============================
 # ==============================================================================
 
-async def data_updater_task():
-    """BACKGROUND TASK: Updates the master history DataFrame every 60 seconds."""
-    await asyncio.sleep(10) # Initial delay
-    while True:
-        st.session_state.past_data = st.session_state.live_data.copy()
-        await asyncio.sleep(60)
-        
-        new_row = {}
-        for symbol in ALL_OPTION_SYMBOLS:
-            live_oi = st.session_state.live_data.get(symbol, {}).get("oi", 0)
-            past_oi = st.session_state.past_data.get(symbol, {}).get("oi", 0)
-            
-            oi_roc = 0.0
-            if past_oi > 0:
-                oi_roc = ((live_oi - past_oi) / past_oi) * 100
-            
-            strike_col_name = extract_strike_and_type(symbol)
-            if strike_col_name:
-                new_row[strike_col_name] = f"{oi_roc:.2f}%"
-
-        if new_row:
-            new_df_row = pd.DataFrame([new_row], index=[get_current_time()])
-            st.session_state.history_df = pd.concat([st.session_state.history_df, new_df_row])
-            st.session_state.last_update_time = get_current_time()
-
 async def listen_to_gdfl():
     """BACKGROUND TASK: Connects to GDFL WebSocket and processes live data."""
     try:
@@ -132,16 +112,7 @@ async def listen_to_gdfl():
             async for message in websocket:
                 data = json.loads(message)
                 if data.get("MessageType") == "RealtimeResult":
-                    symbol = data.get("InstrumentIdentifier")
-                    if symbol and symbol in st.session_state.live_data:
-                        new_oi = data.get("OpenInterest")
-                        if new_oi is not None:
-                            st.session_state.live_data[symbol]["oi"] = new_oi
-                        
-                        if "FUT" in symbol:
-                            new_price = data.get("LastTradePrice")
-                            if new_price is not None:
-                                st.session_state.future_price = new_price
+                    data_queue.put(data)
     except Exception as e:
         # In a real app, you'd want more robust error handling/logging
         print(f"WebSocket Error: {e}")
@@ -150,7 +121,7 @@ def run_background_tasks():
     """Starts the asyncio event loop in a separate thread."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(asyncio.gather(listen_to_gdfl(), data_updater_task()))
+    loop.run_until_complete(listen_to_gdfl())
 
 # ==============================================================================
 # ============================ MAIN UI DRAWING =================================
@@ -188,6 +159,50 @@ def draw_dashboard():
     styled_table = style_dashboard(df_display, center_strike)
     st.dataframe(styled_table)
 
+def process_queued_data():
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Process all available items in the queue
+    data_updated = False
+    while not data_queue.empty():
+        data = data_queue.get()
+        symbol = data.get("InstrumentIdentifier")
+        if symbol:
+            if symbol in st.session_state.live_data:
+                new_oi = data.get("OpenInterest")
+                if new_oi is not None:
+                    st.session_state.live_data[symbol]["oi"] = new_oi
+                    data_updated = True
+
+            if "FUT" in symbol:
+                new_price = data.get("LastTradePrice")
+                if new_price is not None:
+                    st.session_state.future_price = new_price
+                    data_updated = True
+
+    # Check if 60 seconds have passed for history_df update
+    if (now - st.session_state.get('last_history_update_time', datetime.min)).total_seconds() >= 60:
+        st.session_state.past_data = st.session_state.live_data.copy() # Capture current live_data as past_data
+
+        new_row = {}
+        for symbol in ALL_OPTION_SYMBOLS:
+            live_oi = st.session_state.live_data.get(symbol, {}).get("oi", 0)
+            past_oi = st.session_state.past_data.get(symbol, {}).get("oi", 0) # Use the captured past_data
+
+            oi_roc = 0.0
+            if past_oi > 0:
+                oi_roc = ((live_oi - past_oi) / past_oi) * 100 # Corrected to multiply by 100
+
+            strike_col_name = extract_strike_and_type(symbol)
+            if strike_col_name:
+                new_row[strike_col_name] = f"{oi_roc:.2f}%"
+
+        if new_row:
+            new_df_row = pd.DataFrame([new_row], index=[get_current_time()])
+            st.session_state.history_df = pd.concat([st.session_state.history_df, new_df_row])
+            st.session_state.last_update_time = get_current_time()
+            st.session_state.last_history_update_time = now # Update the timestamp for history_df
+
+
 # ==============================================================================
 # ============================ MAIN EXECUTION ==================================
 # ==============================================================================
@@ -201,4 +216,5 @@ if 'background_tasks_started' not in st.session_state:
     else:
         st.warning("Please set the `API_KEY` environment variable for your GDFL feed.")
 
+process_queued_data() # Call the new function to process updates
 draw_dashboard()
