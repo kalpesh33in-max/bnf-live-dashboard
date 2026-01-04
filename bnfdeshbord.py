@@ -220,6 +220,7 @@ def draw_dashboard():
     st.dataframe(styled_table)
 
 def process_queued_data():
+    st.write("Processing queued data...") # Debug
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     # Process all available items in the queue
     data_updated = False
@@ -238,6 +239,8 @@ def process_queued_data():
                 if new_price is not None:
                     st.session_state.future_price = new_price
                     data_updated = True
+    
+    st.write(f"Data updated after queue processing: {data_updated}") # Debug
 
     # Check if 60 seconds have passed for history_df update
     default_aware_datetime_min = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
@@ -262,7 +265,8 @@ def process_queued_data():
             st.session_state.history_df = pd.concat([st.session_state.history_df, new_df_row])
             st.session_state.last_update_time = get_current_time()
             st.session_state.last_history_update_time = now # Update the timestamp for history_df
-
+            data_updated = True # history_df update also means data was updated
+    
     # Periodic saving of history_df to file
     if is_trading_day_and_hours() and (now - st.session_state.get('last_save_time', datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata")))).total_seconds() >= 30:
         today_date_str = now.strftime('%Y-%m-%d')
@@ -274,7 +278,10 @@ def process_queued_data():
             st.error(f"Error saving historical data to {history_file_path}: {e}")
 
     # Conditional st.rerun() to auto-refresh the dashboard
-    if data_updated and (now - st.session_state.get('last_rerun_time', default_aware_datetime_min)).total_seconds() >= 5: # Rerun every 5 seconds if there's new data
+    time_since_last_rerun = (now - st.session_state.get('last_rerun_time', default_aware_datetime_min)).total_seconds() # Debug
+    st.write(f"Time since last rerun: {time_since_last_rerun:.2f} seconds") # Debug
+    if data_updated and time_since_last_rerun >= 5: # Rerun every 5 seconds if there's new data
+        st.write("Calling st.rerun()") # Debug
         st.session_state.last_rerun_time = now
         st.rerun()
 
