@@ -71,6 +71,73 @@ def convert_df_to_excel(df):
 # ============================== CONFIGURATION =================================
 # ==============================================================================
 
+data_queue = queue.Queue()
+
+DATA_DIR = "bnf_data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+st.set_page_config(page_title="Bank Nifty OI Dashboard", layout="wide")
+
+st.markdown("""
+    <style>
+    .stDataFrame th, .stDataFrame td {
+        max-width: 100px;
+        min-width: 75px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🚀 Bank Nifty Interactive OI Dashboard")
+st.subheader(f"Data for: {datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%d %B %Y')}")
+
+API_KEY = os.environ.get("API_KEY", "YOUR_API_KEY") 
+WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
+
+STRIKE_RANGE = range(59000, 61001, 100)
+EXPIRY_PREFIX = "BANKNIFTY27JAN26"
+
+ALL_OPTION_SYMBOLS = [f"{EXPIRY_PREFIX}{strike}{opt_type}" for strike in STRIKE_RANGE for opt_type in ["CE", "PE"]]
+SYMBOLS_TO_MONITOR = ALL_OPTION_SYMBOLS + [f"{EXPIRY_PREFIX}FUT"]
+
+# ==============================================================================
+# ============================ SESSION STATE INIT ==============================
+# ==============================================================================
+
+if 'live_data' not in st.session_state:
+    st.session_state.live_data = {symbol: {"oi": 0} for symbol in SYMBOLS_TO_MONITOR}
+if 'past_data' not in st.session_state:
+    st.session_state.past_data = st.session_state.live_data.copy()
+if 'future_price' not in st.session_state:
+    st.session_state.future_price = 0.0
+if 'history_df' not in st.session_state:
+    today_date_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y-%m-%d')
+    history_file_path = os.path.join(DATA_DIR, f"history_{today_date_str}.csv")
+
+    if is_trading_day_and_hours() and os.path.exists(history_file_path):
+        try:
+            st.session_state.history_df = pd.read_csv(history_file_path, index_col=0)
+            # Ensure index is datetime type if needed, or just keep as string
+        except Exception as e:
+            st.warning(f"Could not load historical data from {history_file_path}: {e}")
+            st.session_state.history_df = pd.DataFrame(columns=[f"{s} {t.lower()}" for s in STRIKE_RANGE for t in ["ce", "pe"]])
+    else:
+        st.session_state.history_df = pd.DataFrame(columns=[f"{s} {t.lower()}" for s in STRIKE_RANGE for t in ["ce", "pe"]])
+if 'atm_strike' not in st.session_state:
+    st.session_state.atm_strike = 60100
+if 'last_update_time' not in st.session_state:
+    st.session_state.last_update_time = "N/A"
+if 'last_history_update_time' not in st.session_state:
+    st.session_state.last_history_update_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+if 'last_save_time' not in st.session_state:
+    st.session_state.last_save_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+
+# ==============================================================================
+# ======================= BACKGROUND DATA UPDATER ==============================
+# ==============================================================================
+
 async def listen_to_gdfl():
     """BACKGROUND TASK: Connects to GDFL WebSocket and processes live data."""
     try:
