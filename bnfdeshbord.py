@@ -133,6 +133,8 @@ if 'last_history_update_time' not in st.session_state:
     st.session_state.last_history_update_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
 if 'last_save_time' not in st.session_state:
     st.session_state.last_save_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+if 'last_rerun_time' not in st.session_state:
+    st.session_state.last_rerun_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
 
 # ==============================================================================
 # ======================= BACKGROUND DATA UPDATER ==============================
@@ -270,6 +272,11 @@ def process_queued_data():
             st.session_state.last_save_time = now
         except Exception as e:
             st.error(f"Error saving historical data to {history_file_path}: {e}")
+
+    # Conditional st.rerun() to auto-refresh the dashboard
+    if data_updated and (now - st.session_state.get('last_rerun_time', default_aware_datetime_min)).total_seconds() >= 5: # Rerun every 5 seconds if there's new data
+        st.session_state.last_rerun_time = now
+        st.rerun()
 
 
 # ==============================================================================
