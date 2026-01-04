@@ -9,12 +9,16 @@ import os
 import re
 import threading
 import queue
+from io import BytesIO
 
 # ==============================================================================
 # ============================== CONFIGURATION =================================
 # ==============================================================================
 
 data_queue = queue.Queue()
+
+DATA_DIR = "bnf_data"
+os.makedirs(DATA_DIR, exist_ok=True)
 
 st.set_page_config(page_title="Bank Nifty OI Dashboard", layout="wide")
 
@@ -31,6 +35,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🚀 Bank Nifty Interactive OI Dashboard")
+st.subheader(f"Data for: {datetime.now(ZoneInfo('Asia/Kolkata')).strftime('%d %B %Y')}")
 
 API_KEY = os.environ.get("API_KEY", "YOUR_API_KEY") 
 WSS_URL = "wss://nimblewebstream.lisuns.com:4576/"
@@ -52,14 +57,26 @@ if 'past_data' not in st.session_state:
 if 'future_price' not in st.session_state:
     st.session_state.future_price = 0.0
 if 'history_df' not in st.session_state:
-    all_cols = sorted([f"{s} {t.lower()}" for s in STRIKE_RANGE for t in ["ce", "pe"]])
-    st.session_state.history_df = pd.DataFrame(columns=all_cols)
+    today_date_str = datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y-%m-%d')
+    history_file_path = os.path.join(DATA_DIR, f"history_{today_date_str}.csv")
+
+    if is_trading_day_and_hours() and os.path.exists(history_file_path):
+        try:
+            st.session_state.history_df = pd.read_csv(history_file_path, index_col=0)
+            # Ensure index is datetime type if needed, or just keep as string
+        except Exception as e:
+            st.warning(f"Could not load historical data from {history_file_path}: {e}")
+            st.session_state.history_df = pd.DataFrame(columns=[f"{s} {t.lower()}" for s in STRIKE_RANGE for t in ["ce", "pe"]])
+    else:
+        st.session_state.history_df = pd.DataFrame(columns=[f"{s} {t.lower()}" for s in STRIKE_RANGE for t in ["ce", "pe"]])
 if 'atm_strike' not in st.session_state:
     st.session_state.atm_strike = 60100
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = "N/A"
 if 'last_history_update_time' not in st.session_state:
     st.session_state.last_history_update_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+if 'last_save_time' not in st.session_state:
+    st.session_state.last_save_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
 
 # ==============================================================================
 # ============================ HELPER FUNCTIONS ================================
@@ -93,6 +110,29 @@ def style_dashboard(df, selected_atm):
             df_style[col_name] = style
         return df_style
     return df.style.apply(moneyness_styler, axis=None)
+
+def is_trading_day_and_hours():
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # Check if it's a weekday (Monday=0, Friday=4)
+    if not (0 <= now.weekday() <= 4):
+        return False
+
+    # Check if current time is within trading hours (9:15 AM to 3:30 PM)
+    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+
+    return market_open <= now <= market_close
+
+def convert_df_to_csv(df):
+    return df.to_csv(index=True).encode('utf-8')
+
+def convert_df_to_excel(df):
+    output = BytesIO()
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
+    df.to_excel(writer, index=True, sheet_name='Sheet1')
+    writer.close()
+    processed_data = output.getvalue()
+    return processed_data
 
 # ==============================================================================
 # ======================= BACKGROUND DATA UPDATER ==============================
@@ -135,10 +175,28 @@ def draw_dashboard():
         index=list(STRIKE_RANGE).index(st.session_state.get('atm_strike', 60100))
     )
 
-    future_price_col, atm_col, last_update_col = st.columns(3)
+    future_price_col, atm_col, last_update_col, download_csv_col, download_xlsx_col = st.columns(5)
     future_price_col.metric("BNF Future Price", f"{st.session_state.future_price:.2f}")
     atm_col.metric("Selected ATM", st.session_state.atm_strike)
     last_update_col.info(f"Last updated: {st.session_state.last_update_time}")
+
+    csv_data = convert_df_to_csv(st.session_state.history_df)
+    download_csv_col.download_button(
+        label="Download CSV",
+        data=csv_data,
+        file_name=f"BNF_OI_Dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
+        key="download_csv"
+    )
+
+    xlsx_data = convert_df_to_excel(st.session_state.history_df)
+    download_xlsx_col.download_button(
+        label="Download XLSX",
+        data=xlsx_data,
+        file_name=f"BNF_OI_Dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="download_xlsx"
+    )
 
     center_strike = st.session_state.atm_strike
     ce_strikes = [f"{center_strike - i*100} ce" for i in range(5, 0, -1)]
@@ -202,6 +260,16 @@ def process_queued_data():
             st.session_state.history_df = pd.concat([st.session_state.history_df, new_df_row])
             st.session_state.last_update_time = get_current_time()
             st.session_state.last_history_update_time = now # Update the timestamp for history_df
+
+    # Periodic saving of history_df to file
+    if is_trading_day_and_hours() and (now - st.session_state.get('last_save_time', datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata")))).total_seconds() >= 30:
+        today_date_str = now.strftime('%Y-%m-%d')
+        history_file_path = os.path.join(DATA_DIR, f"history_{today_date_str}.csv")
+        try:
+            st.session_state.history_df.to_csv(history_file_path)
+            st.session_state.last_save_time = now
+        except Exception as e:
+            st.error(f"Error saving historical data to {history_file_path}: {e}")
 
 
 # ==============================================================================
