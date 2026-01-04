@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import os
+import re
 
 # ==============================================================================
 # ============================== CONFIGURATION =================================
@@ -49,10 +50,10 @@ if 'future_price' not in st.session_state:
     st.session_state.future_price = 0
 if 'dashboard_df' not in st.session_state:
     # Initialize an empty DataFrame with correct columns based on PDF
-    columns = [
+    columns = sorted([
         "59700 ce", "59800 ce", "59900 ce", "60000 ce", "60100 ce",
-        "60100 pe", "60200 pe", "60300 pe", "60400 pe",
-    ]
+        "60100 pe", "60200 pe", "60300 pe", "60400 pe", "60500 pe", "60600 pe"
+    ])
     st.session_state.dashboard_df = pd.DataFrame(columns=columns)
 
 # ==============================================================================
@@ -65,13 +66,45 @@ def get_current_time():
 
 def extract_strike_and_type(symbol):
     """Extracts strike and type from symbol string."""
-    # Example: BANKNIFTY27JAN2660100CE -> (60100, ce)
+    # Example: BANKNIFTY27JAN2660100CE -> "60100 ce"
     match = re.search(r'\d{2}[A-Z]{3}\d{2}(\d+)(CE|PE)$', symbol)
     if match:
         strike = match.group(1)
         opt_type = match.group(2).lower()
         return f"{strike} {opt_type}"
     return None
+
+def style_dashboard(df, future_price):
+    """Applies color coding based on moneyness."""
+    if future_price == 0:
+        return df
+
+    def apply_color(val, col_name):
+        try:
+            parts = col_name.split()
+            strike = float(parts[0])
+            opt_type = parts[1]
+        except (ValueError, IndexError):
+            return ''
+
+        atm_band = future_price * 0.005 # 0.5% band for ATM
+        style = ''
+
+        if abs(strike - future_price) <= atm_band:
+            style = 'background-color: lightyellow'
+        elif opt_type == 'ce' and strike < future_price: # ITM Call
+            style = 'background-color: lightgreen'
+        elif opt_type == 'pe' and strike > future_price: # ITM Put
+            style = 'background-color: lightcoral'
+        
+        return style
+
+    # Create a new DataFrame for styling to avoid modifying the original
+    styled_df = df.copy()
+    for col in styled_df.columns:
+        styled_df[col] = styled_df[col].apply(lambda val: apply_color(val, col))
+
+    return df.style.apply(lambda x: styled_df.loc[x.name], axis=1)
 
 # ==============================================================================
 # ============================ STREAMLIT LAYOUT ================================
@@ -90,11 +123,15 @@ data_placeholder = st.empty()
 
 async def update_dashboard():
     """Calculates OI RoC and updates the Streamlit dashboard."""
+    # Small initial sleep to allow websocket to connect
+    await asyncio.sleep(5)
+    
     while True:
-        await asyncio.sleep(60) # Wait for 1 minute
-        
         # Copy live data to past data for calculation
         st.session_state.past_data = st.session_state.live_data.copy()
+        
+        # Wait for 1 minute before the next update cycle
+        await asyncio.sleep(60) 
         
         new_row = {}
         for symbol in SYMBOLS_TO_MONITOR:
@@ -125,7 +162,10 @@ async def update_dashboard():
         # Update Streamlit elements
         future_price_placeholder.metric("Bank Nifty Future Price", f"{st.session_state.future_price:.2f}")
         last_update_placeholder.info(f"Last updated: {get_current_time()}")
-        data_placeholder.dataframe(st.session_state.dashboard_df)
+        
+        # Apply styling before displaying
+        styled_table = style_dashboard(st.session_state.dashboard_df, st.session_state.future_price)
+        data_placeholder.dataframe(styled_table)
 
 
 async def listen_to_gdfl():
