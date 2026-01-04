@@ -59,7 +59,7 @@ if 'atm_strike' not in st.session_state:
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = "N/A"
 if 'last_history_update_time' not in st.session_state:
-    st.session_state.last_history_update_time = datetime.min
+    st.session_state.last_history_update_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
 
 # ==============================================================================
 # ============================ HELPER FUNCTIONS ================================
@@ -180,7 +180,8 @@ def process_queued_data():
                     data_updated = True
 
     # Check if 60 seconds have passed for history_df update
-    if (now - st.session_state.get('last_history_update_time', datetime.min)).total_seconds() >= 60:
+    default_aware_datetime_min = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+    if (now - st.session_state.get('last_history_update_time', default_aware_datetime_min)).total_seconds() >= 60:
         st.session_state.past_data = st.session_state.live_data.copy() # Capture current live_data as past_data
 
         new_row = {}
