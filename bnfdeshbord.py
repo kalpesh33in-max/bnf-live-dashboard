@@ -236,6 +236,7 @@ def draw_dashboard():
     st.dataframe(styled_table)
 
 def process_queued_data():
+    print(f"DEBUG: process_queued_data() called at {get_current_time()}")
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     # Process all available items in the queue
     data_updated = False
