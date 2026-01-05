@@ -130,11 +130,11 @@ if 'atm_strike' not in st.session_state:
 if 'last_update_time' not in st.session_state:
     st.session_state.last_update_time = "N/A"
 if 'last_history_update_time' not in st.session_state:
-    st.session_state.last_history_update_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+    st.session_state.last_history_update_time = datetime.now(ZoneInfo("Asia/Kolkata"))
 if 'last_save_time' not in st.session_state:
     st.session_state.last_save_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
 if 'last_rerun_time' not in st.session_state:
-    st.session_state.last_rerun_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+    st.session_state.last_rerun_time = datetime.now(ZoneInfo("Asia/Kolkata"))
 if 'needs_rerun' not in st.session_state:
     st.session_state.needs_rerun = False
 
