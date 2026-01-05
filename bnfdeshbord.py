@@ -9,7 +9,7 @@ import os
 import re
 import threading
 import queue
-from io import BytesIO
+
 
 # ==============================================================================
 # ============================ HELPER FUNCTIONS ================================
@@ -55,17 +55,6 @@ def style_dashboard(df, selected_atm):
             df_style[col_name] = style
         return df_style
     return df.style.apply(moneyness_styler, axis=None)
-
-def convert_df_to_csv(df):
-    return df.to_csv(index=True).encode('utf-8')
-
-def convert_df_to_excel(df):
-    output = BytesIO()
-    writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    df.to_excel(writer, index=True, sheet_name='Sheet1')
-    writer.close()
-    processed_data = output.getvalue()
-    return processed_data
 
 # ==============================================================================
 # ============================== CONFIGURATION =================================
@@ -192,28 +181,10 @@ def draw_dashboard():
         index=list(STRIKE_RANGE).index(st.session_state.get('atm_strike', 60100))
     )
 
-    future_price_col, atm_col, last_update_col, download_csv_col, download_xlsx_col = st.columns(5)
+    future_price_col, atm_col, last_update_col = st.columns(3)
     future_price_col.metric("BNF Future Price", f"{st.session_state.future_price:.2f}")
     atm_col.metric("Selected ATM", st.session_state.atm_strike)
     last_update_col.info(f"Last updated: {st.session_state.last_update_time}")
-
-    csv_data = convert_df_to_csv(st.session_state.history_df)
-    download_csv_col.download_button(
-        label="Download CSV",
-        data=csv_data,
-        file_name=f"BNF_OI_Dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        mime="text/csv",
-        key="download_csv"
-    )
-
-    xlsx_data = convert_df_to_excel(st.session_state.history_df)
-    download_xlsx_col.download_button(
-        label="Download XLSX",
-        data=xlsx_data,
-        file_name=f"BNF_OI_Dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="download_xlsx"
-    )
 
     center_strike = st.session_state.atm_strike
     ce_strikes = [f"{center_strike - i*100} ce" for i in range(5, 0, -1)]
@@ -261,7 +232,7 @@ def process_queued_data():
     default_aware_datetime_min = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
     time_since_last_history_update = (now - st.session_state.get('last_history_update_time', default_aware_datetime_min)).total_seconds()
     
-    if time_since_last_history_update >= 60:
+    if is_trading_day_and_hours() and time_since_last_history_update >= 60:
         st.session_state.past_data = st.session_state.live_data.copy() # Capture current live_data as past_data
 
         new_row = {}
