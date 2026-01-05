@@ -162,11 +162,9 @@ async def listen_to_gdfl():
             print("Subscriptions sent. Listening for messages...")
 
             async for message in websocket:
-                print(f"DEBUG: Raw WebSocket message received: {message}") # Added for debugging
                 data = json.loads(message)
                 if data.get("MessageType") == "RealtimeResult":
                     data_queue.put(data)
-                    print(f"DEBUG: RealtimeResult received for {data.get('InstrumentIdentifier')} and put into queue at {get_current_time()}")
     except websockets.exceptions.ConnectionClosedOK:
         print("WebSocket connection closed gracefully.")
     except websockets.exceptions.ConnectionClosedError as e:
@@ -237,15 +235,11 @@ def draw_dashboard():
     st.dataframe(styled_table)
 
 def process_queued_data():
-    print(f"DEBUG: process_queued_data() called at {get_current_time()}")
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     # Process all available items in the queue
     data_updated = False
-    if not data_queue.empty():
-        print(f"DEBUG: Processing {data_queue.qsize()} queued messages at {get_current_time()}")
     while not data_queue.empty():
         data = data_queue.get()
-        print(f"DEBUG: Retrieved data from queue for {data.get('InstrumentIdentifier')} at {get_current_time()}")
         symbol = data.get("InstrumentIdentifier")
         if symbol:
             if symbol in st.session_state.live_data:
@@ -268,7 +262,6 @@ def process_queued_data():
     time_since_last_history_update = (now - st.session_state.get('last_history_update_time', default_aware_datetime_min)).total_seconds()
     
     if time_since_last_history_update >= 60:
-        print(f"DEBUG: Updating history_df at {get_current_time()}. Time since last update: {time_since_last_history_update:.2f} seconds.")
         st.session_state.past_data = st.session_state.live_data.copy() # Capture current live_data as past_data
 
         new_row = {}
@@ -353,14 +346,8 @@ if st.session_state.needs_rerun:
 
     if time_since_last_rerun >= 5: # Rerun every 5 seconds if there's new data
 
-        print(f"DEBUG: Triggering rerun at {get_current_time()}. Time since last rerun: {time_since_last_rerun:.2f} seconds.")
-
         st.session_state.last_rerun_time = now
 
         st.session_state.needs_rerun = False # Reset the flag
 
         st.rerun()
-
-    else:
-
-        print(f"DEBUG: Rerun needed, but waiting for 5 seconds. Time since last rerun: {time_since_last_rerun:.2f} seconds.")
