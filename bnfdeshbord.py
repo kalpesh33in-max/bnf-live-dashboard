@@ -144,19 +144,25 @@ if 'needs_rerun' not in st.session_state:
 
 async def listen_to_gdfl():
     """BACKGROUND TASK: Connects to GDFL WebSocket and processes live data."""
+    print("Attempting to connect to WebSocket...")
     try:
         async with websockets.connect(WSS_URL) as websocket:
+            print("WebSocket connection established.")
             await websocket.send(json.dumps({"MessageType": "Authenticate", "Password": API_KEY}))
             auth_response = await websocket.recv()
             auth_data = json.loads(auth_response)
+            print(f"Authentication Response: {auth_data}")
             if not auth_data.get("Complete"):
                 print(f"WebSocket Authentication Failed: {auth_data.get('Reason')}")
                 return
 
+            print("Authentication successful. Sending subscriptions...")
             for symbol in SYMBOLS_TO_MONITOR:
                 await websocket.send(json.dumps({"MessageType": "SubscribeRealtime", "Exchange": "NFO", "Unsubscribe": "false", "InstrumentIdentifier": symbol}))
+            print("Subscriptions sent. Listening for messages...")
 
             async for message in websocket:
+                # print(f"Received WebSocket message: {message}") # This can be very verbose, enable if needed
                 data = json.loads(message)
                 if data.get("MessageType") == "RealtimeResult":
                     data_queue.put(data)
@@ -233,6 +239,8 @@ def process_queued_data():
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     # Process all available items in the queue
     data_updated = False
+    if not data_queue.empty():
+        st.info(f"Processing {data_queue.qsize()} queued messages at {get_current_time()}")
     while not data_queue.empty():
         data = data_queue.get()
         symbol = data.get("InstrumentIdentifier")
@@ -240,18 +248,24 @@ def process_queued_data():
             if symbol in st.session_state.live_data:
                 new_oi = data.get("OpenInterest")
                 if new_oi is not None:
-                    st.session_state.live_data[symbol]["oi"] = new_oi
-                    data_updated = True
+                    # Only mark data_updated if an actual OI value changes, or Future Price changes
+                    if st.session_state.live_data[symbol]["oi"] != new_oi:
+                        st.session_state.live_data[symbol]["oi"] = new_oi
+                        data_updated = True
 
             if "FUT" in symbol:
                 new_price = data.get("LastTradePrice")
                 if new_price is not None:
-                    st.session_state.future_price = new_price
-                    data_updated = True
+                    if st.session_state.future_price != new_price:
+                        st.session_state.future_price = new_price
+                        data_updated = True
     
     # Check if 60 seconds have passed for history_df update
     default_aware_datetime_min = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
-    if (now - st.session_state.get('last_history_update_time', default_aware_datetime_min)).total_seconds() >= 60:
+    time_since_last_history_update = (now - st.session_state.get('last_history_update_time', default_aware_datetime_min)).total_seconds()
+    
+    if time_since_last_history_update >= 60:
+        st.info(f"Updating history_df at {get_current_time()}. Time since last update: {time_since_last_history_update:.2f} seconds.")
         st.session_state.past_data = st.session_state.live_data.copy() # Capture current live_data as past_data
 
         new_row = {}
@@ -313,6 +327,9 @@ if st.session_state.needs_rerun:
     time_since_last_rerun = (now - st.session_state.get('last_rerun_time', default_aware_datetime_min)).total_seconds()
     
     if time_since_last_rerun >= 5: # Rerun every 5 seconds if there's new data
+        st.info(f"Triggering rerun at {get_current_time()}. Time since last rerun: {time_since_last_rerun:.2f} seconds.")
         st.session_state.last_rerun_time = now
         st.session_state.needs_rerun = False # Reset the flag
         st.rerun()
+    else:
+        st.info(f"Rerun needed, but waiting for 5 seconds. Time since last rerun: {time_since_last_rerun:.2f} seconds.")
