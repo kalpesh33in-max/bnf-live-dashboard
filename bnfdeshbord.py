@@ -240,7 +240,7 @@ def process_queued_data():
     # Process all available items in the queue
     data_updated = False
     if not data_queue.empty():
-        st.info(f"Processing {data_queue.qsize()} queued messages at {get_current_time()}")
+        print(f"DEBUG: Processing {data_queue.qsize()} queued messages at {get_current_time()}")
     while not data_queue.empty():
         data = data_queue.get()
         symbol = data.get("InstrumentIdentifier")
@@ -265,7 +265,7 @@ def process_queued_data():
     time_since_last_history_update = (now - st.session_state.get('last_history_update_time', default_aware_datetime_min)).total_seconds()
     
     if time_since_last_history_update >= 60:
-        st.info(f"Updating history_df at {get_current_time()}. Time since last update: {time_since_last_history_update:.2f} seconds.")
+        print(f"DEBUG: Updating history_df at {get_current_time()}. Time since last update: {time_since_last_history_update:.2f} seconds.")
         st.session_state.past_data = st.session_state.live_data.copy() # Capture current live_data as past_data
 
         new_row = {}
@@ -306,30 +306,58 @@ def process_queued_data():
 # ============================ MAIN EXECUTION ==================================
 # ==============================================================================
 
+    
+
 if 'background_tasks_started' not in st.session_state:
+
     if API_KEY and API_KEY != "YOUR_API_KEY":
+
         # Run the asyncio event loop in a separate thread
+
         thread = threading.Thread(target=run_background_tasks, daemon=True)
+
         thread.start()
+
         st.session_state.background_tasks_started = True
+
     else:
+
         st.error("Error: GDFL API Key is not configured.")
-        st.info("Please set the `API_KEY` environment variable or replace 'YOUR_API_KEY' in the script with your actual API key.")
+
+        print("ERROR: Please set the `API_KEY` environment variable or replace 'YOUR_API_KEY' in the script with your actual API key.")
+
         st.stop() # Stop the app if API key is not set
 
+
+
 process_queued_data() # Call the new function to process updates
+
 draw_dashboard()
 
+
+
 # Conditional st.rerun() to auto-refresh the dashboard
+
 if st.session_state.needs_rerun:
+
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
+
     default_aware_datetime_min = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+
     time_since_last_rerun = (now - st.session_state.get('last_rerun_time', default_aware_datetime_min)).total_seconds()
+
     
+
     if time_since_last_rerun >= 5: # Rerun every 5 seconds if there's new data
-        st.info(f"Triggering rerun at {get_current_time()}. Time since last rerun: {time_since_last_rerun:.2f} seconds.")
+
+        print(f"DEBUG: Triggering rerun at {get_current_time()}. Time since last rerun: {time_since_last_rerun:.2f} seconds.")
+
         st.session_state.last_rerun_time = now
+
         st.session_state.needs_rerun = False # Reset the flag
+
         st.rerun()
+
     else:
-        st.info(f"Rerun needed, but waiting for 5 seconds. Time since last rerun: {time_since_last_rerun:.2f} seconds.")
+
+        print(f"DEBUG: Rerun needed, but waiting for 5 seconds. Time since last rerun: {time_since_last_rerun:.2f} seconds.")
