@@ -135,6 +135,8 @@ if 'last_save_time' not in st.session_state:
     st.session_state.last_save_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
 if 'last_rerun_time' not in st.session_state:
     st.session_state.last_rerun_time = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+if 'needs_rerun' not in st.session_state:
+    st.session_state.needs_rerun = False
 
 # ==============================================================================
 # ======================= BACKGROUND DATA UPDATER ==============================
@@ -146,7 +148,10 @@ async def listen_to_gdfl():
         async with websockets.connect(WSS_URL) as websocket:
             await websocket.send(json.dumps({"MessageType": "Authenticate", "Password": API_KEY}))
             auth_response = await websocket.recv()
-            if not json.loads(auth_response).get("Complete"): return
+            auth_data = json.loads(auth_response)
+            if not auth_data.get("Complete"):
+                print(f"WebSocket Authentication Failed: {auth_data.get('Reason')}")
+                return
 
             for symbol in SYMBOLS_TO_MONITOR:
                 await websocket.send(json.dumps({"MessageType": "SubscribeRealtime", "Exchange": "NFO", "Unsubscribe": "false", "InstrumentIdentifier": symbol}))
@@ -155,9 +160,14 @@ async def listen_to_gdfl():
                 data = json.loads(message)
                 if data.get("MessageType") == "RealtimeResult":
                     data_queue.put(data)
+    except websockets.exceptions.ConnectionClosedOK:
+        print("WebSocket connection closed gracefully.")
+    except websockets.exceptions.ConnectionClosedError as e:
+        print(f"WebSocket connection closed with error: {e}")
+    except ConnectionRefusedError:
+        print("WebSocket connection refused. Is the server running and accessible?")
     except Exception as e:
-        # In a real app, you'd want more robust error handling/logging
-        print(f"WebSocket Error: {e}")
+        print(f"An unexpected WebSocket error occurred: {e}")
 
 def run_background_tasks():
     """Starts the asyncio event loop in a separate thread."""
@@ -220,7 +230,6 @@ def draw_dashboard():
     st.dataframe(styled_table)
 
 def process_queued_data():
-    st.write("Processing queued data...") # Debug
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     # Process all available items in the queue
     data_updated = False
@@ -240,8 +249,6 @@ def process_queued_data():
                     st.session_state.future_price = new_price
                     data_updated = True
     
-    st.write(f"Data updated after queue processing: {data_updated}") # Debug
-
     # Check if 60 seconds have passed for history_df update
     default_aware_datetime_min = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
     if (now - st.session_state.get('last_history_update_time', default_aware_datetime_min)).total_seconds() >= 60:
@@ -276,14 +283,9 @@ def process_queued_data():
             st.session_state.last_save_time = now
         except Exception as e:
             st.error(f"Error saving historical data to {history_file_path}: {e}")
-
-    # Conditional st.rerun() to auto-refresh the dashboard
-    time_since_last_rerun = (now - st.session_state.get('last_rerun_time', default_aware_datetime_min)).total_seconds() # Debug
-    st.write(f"Time since last rerun: {time_since_last_rerun:.2f} seconds") # Debug
-    if data_updated and time_since_last_rerun >= 5: # Rerun every 5 seconds if there's new data
-        st.write("Calling st.rerun()") # Debug
-        st.session_state.last_rerun_time = now
-        st.rerun()
+    
+    if data_updated:
+        st.session_state.needs_rerun = True
 
 
 # ==============================================================================
@@ -297,7 +299,20 @@ if 'background_tasks_started' not in st.session_state:
         thread.start()
         st.session_state.background_tasks_started = True
     else:
-        st.warning("Please set the `API_KEY` environment variable for your GDFL feed.")
+        st.error("Error: GDFL API Key is not configured.")
+        st.info("Please set the `API_KEY` environment variable or replace 'YOUR_API_KEY' in the script with your actual API key.")
+        st.stop() # Stop the app if API key is not set
 
 process_queued_data() # Call the new function to process updates
 draw_dashboard()
+
+# Conditional st.rerun() to auto-refresh the dashboard
+if st.session_state.needs_rerun:
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    default_aware_datetime_min = datetime.min.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+    time_since_last_rerun = (now - st.session_state.get('last_rerun_time', default_aware_datetime_min)).total_seconds()
+    
+    if time_since_last_rerun >= 5: # Rerun every 5 seconds if there's new data
+        st.session_state.last_rerun_time = now
+        st.session_state.needs_rerun = False # Reset the flag
+        st.rerun()
