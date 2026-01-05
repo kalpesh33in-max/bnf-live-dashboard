@@ -162,7 +162,7 @@ async def listen_to_gdfl():
             print("Subscriptions sent. Listening for messages...")
 
             async for message in websocket:
-                # print(f"Received WebSocket message: {message}") # This can be very verbose, enable if needed
+                print(f"DEBUG: Raw WebSocket message received: {message}") # Added for debugging
                 data = json.loads(message)
                 if data.get("MessageType") == "RealtimeResult":
                     data_queue.put(data)
