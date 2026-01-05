@@ -166,6 +166,7 @@ async def listen_to_gdfl():
                 data = json.loads(message)
                 if data.get("MessageType") == "RealtimeResult":
                     data_queue.put(data)
+                    print(f"DEBUG: RealtimeResult received for {data.get('InstrumentIdentifier')} and put into queue at {get_current_time()}")
     except websockets.exceptions.ConnectionClosedOK:
         print("WebSocket connection closed gracefully.")
     except websockets.exceptions.ConnectionClosedError as e:
@@ -244,6 +245,7 @@ def process_queued_data():
         print(f"DEBUG: Processing {data_queue.qsize()} queued messages at {get_current_time()}")
     while not data_queue.empty():
         data = data_queue.get()
+        print(f"DEBUG: Retrieved data from queue for {data.get('InstrumentIdentifier')} at {get_current_time()}")
         symbol = data.get("InstrumentIdentifier")
         if symbol:
             if symbol in st.session_state.live_data:
